@@ -117,12 +117,20 @@ def silencios(video, dur):
     return max(0.0, al_principio - 0.04), max(0.0, al_final - 0.04)
 
 
-def pausas(video, minimo=0.25):
+def pausas(video, minimo=0.25, umbral=-38):
     """[(inicio, fin)] de cada pausa de la voz de al menos `minimo` s: ahí se puede cortar sin pisar una palabra."""
-    r = sale(["ffmpeg", "-hide_banner", "-nostats", "-i", str(video), "-af", f"silencedetect=n=-38dB:d={minimo}", "-vn", "-f", "null", "-"])
+    r = sale(["ffmpeg", "-hide_banner", "-nostats", "-i", str(video), "-af", f"silencedetect=n={umbral}dB:d={minimo}", "-vn", "-f", "null", "-"])
     ini = [float(x) for x in re.findall(r"silence_start: (-?[\d.]+)", r.stderr)]
     fin = [float(x) for x in re.findall(r"silence_end: ([\d.]+)", r.stderr)]
     return [(max(0.0, a), b) for a, b in zip(ini, fin)]
+
+
+def uniones(video):
+    """Las uniones de la edición: donde el editor quitó la pausa y dos frases quedaron pegadas, solo queda uno o dos
+    fotogramas en silencio (0,03 a 0,12 s, muy por debajo de la voz). No salen como pausa, pero ahí también se puede
+    cortar, justo en medio: un poco antes se lleva la cola de la frase anterior y un poco después, el ataque de la
+    siguiente."""
+    return [(a, b) for a, b in pausas(video, 0.03, -50) if b - a < 0.12]
 
 
 def leer_quitar(spec):
@@ -138,14 +146,17 @@ def leer_quitar(spec):
     return tramos
 
 
-def comprobar_cortes(tramos, huecos, nombre):
-    """Cada borde de lo que se quita cae en una pausa de la voz: si no, la copia cortaría una palabra."""
+def comprobar_cortes(tramos, huecos, nombre, juntas=()):
+    """Cada borde de lo que se quita cae en una pausa de la voz, o dentro de una unión de la edición (`uniones`): si
+    no, la copia cortaría una palabra."""
     for a, b in tramos:
         for borde in (a, b):
-            if not any(x - 0.05 <= borde <= y + 0.05 for x, y in huecos):
-                cerca = sorted(huecos, key=lambda h: abs((h[0] + h[1]) / 2 - borde))[:3]
+            if not (any(x - 0.05 <= borde <= y + 0.05 for x, y in huecos)
+                    or any(x - 0.01 <= borde <= y + 0.01 for x, y in juntas)):
+                cerca = sorted([*huecos, *juntas], key=lambda h: abs((h[0] + h[1]) / 2 - borde))[:3]
                 sys.exit(f"{nombre}: el corte en {borde:.2f} s cae encima de la voz. Pausas cercanas: "
-                         + ", ".join(f"{x:.2f}-{y:.2f}" for x, y in sorted(cerca)))
+                         + ", ".join(f"{x:.2f}-{y:.2f}" + (f" (unión: corta en {(x + y) / 2:.2f})" if (x, y) in juntas else "")
+                                     for x, y in sorted(cerca)))
 
 
 def leer_srt(fichero):
@@ -341,7 +352,10 @@ def main():
     meta = info(video)
     if a.ver_pausas:
         print(f"Pausas de la voz en {video.name} ({meta['dur']:.1f} s); una frase va de una pausa a la siguiente:")
-        print("\n".join(f"  {x:7.2f} - {y:7.2f}" for x, y in pausas(video)))
+        lista = sorted([(x, y, "") for x, y in pausas(video)]
+                       + [(x, y, f"   silencio de un fotograma (unión de la edición): si ahí empieza una frase, corta justo en {(x + y) / 2:.2f}")
+                          for x, y in uniones(video)])
+        print("\n".join(f"  {x:7.2f} - {y:7.2f}{u}" for x, y, u in lista))
         return
     if a.musica and not meta["audio"]:
         sys.exit("--musica: el vídeo no tiene sonido")
@@ -357,9 +371,9 @@ def main():
             sys.exit(f"{a.titulos} tiene {len(titulos)} titulares y hacen falta {a.n}")
     quitar = [leer_quitar(q) for q in (a.quitar or [])]
     if quitar:
-        huecos = pausas(video, 0.12)
+        huecos, juntas = pausas(video, 0.12), uniones(video)
         for k, q in enumerate(quitar):
-            comprobar_cortes(q, huecos, f"--quitar de la copia {k + 1}")
+            comprobar_cortes(q, huecos, f"--quitar de la copia {k + 1}", juntas)
             if a.corte is not None and any(x < a.corte for x, _ in q):
                 sys.exit(f"--quitar de la copia {k + 1}: con --ganchos solo se quita después de --corte ({a.corte} s)")
 

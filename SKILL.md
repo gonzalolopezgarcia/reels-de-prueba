@@ -58,6 +58,11 @@ no bastan: Instagram reconoce el vídeo por lo que se ve y se oye.
    - **¿Qué frases sobran?** Pregúntale qué frases del cuerpo se pueden quitar sin que se deje de entender (ni el
      comienzo ni el final). Con `--ver-pausas` ves dónde empieza y acaba cada frase: cada `--quitar` va de una pausa a
      otra, nunca cortando una palabra (el script se niega si cae encima de la voz).
+     - **Aunque tenga otros comienzos, que cada copia quite además una frase distinta**: el cuerpo es casi todo el
+       vídeo, y una copia que solo cambia los primeros segundos repite el resto entero.
+     - **Frases pegadas**: en un vídeo ya editado, muchas frases empiezan sin pausa (el editor la quitó) y solo queda
+       un fotograma en silencio. `--ver-pausas` lo marca como «silencio de un fotograma» con el segundo exacto: el
+       corte va ahí, ni antes (se lleva la cola de la frase anterior) ni después (se come el principio de la siguiente).
 
 2. **Mira el vídeo antes de tocar nada.** Saca un fotograma del segundo 1 y otro de la mitad:
    ```bash
