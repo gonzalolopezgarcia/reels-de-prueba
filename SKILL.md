@@ -1,6 +1,6 @@
 ---
 name: reels-de-prueba
-description: Saca 5 copias distintas de un reel que ya has subido, para publicarlas como «Reels de prueba» de Instagram (solo las ve quien no te sigue y no salen en tu perfil), una al día durante 5 días. Cada copia cambia varias cosas a la vez para que Instagram no la trate como el mismo vídeo repetido. Úsala con «haz las pruebas de este reel», «saca las copias de prueba», «trial reels de este vídeo». Necesita ffmpeg; no toca tu cuenta.
+description: Saca copias distintas (5 por defecto) de un reel que ya has subido, para publicarlas como «Reels de prueba» de Instagram (solo las ve quien no te sigue y no salen en tu perfil), una al día. Cada copia lleva al menos 3 cambios grandes (otro comienzo, otra frase fuera, otro titular, otra canción) para que Instagram no la trate como el mismo vídeo repetido; si no llegan, avisa y no las hace sin tu sí. Úsala con «haz las pruebas de este reel», «saca las copias de prueba», «trial reels de este vídeo». Necesita ffmpeg; no toca tu cuenta.
 ---
 
 # Reels de prueba: 5 copias de cada reel, una al día
@@ -11,6 +11,27 @@ vuelve a salir cinco veces más, a gente nueva, sin cansar a tus seguidores.
 
 La clave para que no te frenen: **cada copia tiene que ser otro vídeo**, no el mismo con otro nombre. Cinco copias
 iguales, o varias el mismo día, se quedan en 0 visualizaciones y pueden costarte alcance.
+
+## 🚨 La regla: 3 cambios grandes por copia
+
+Instagram reconoce un vídeo por lo que se ve y se oye. **El color, la velocidad, el zoom, el grano, el espejo o un
+fichero nuevo no lo esconden**: ayudan, pero el vídeo sigue siendo el mismo. Lo que de verdad lo hace otro vídeo:
+
+| Cambio grande | Cómo | Cuesta |
+|---|---|---|
+| **Otro comienzo** (gancho) | Grabar los primeros 3-5 s dichos de otra forma: `--ganchos` | 1 minuto de grabar, el que más cambia |
+| **Otra frase fuera** (corte) | Quitar en cada copia una frase distinta del cuerpo: `--quitar` | Nada: sale del vídeo |
+| **Otro titular** | La misma idea dicha de otra forma: `--titulos` | Nada |
+| **Otra canción** de fondo | Una distinta en cada copia, nunca la del original: `--musica` | Tener 5 canciones |
+
+- **Cada copia, al menos 3 de los 4 frente al original, y al menos 2 distintos frente a cada otra copia.**
+  Con un solo vídeo y sin grabar nada se llega: titular + frase fuera + canción.
+- **Si no salen 5 que cumplan, haz menos** (`--n 3`). Mejor 3 distintas que 5 parecidas.
+- `copias.py` lo comprueba antes de empezar (`distintas.py`) y **para con un aviso** si alguna no llega.
+- 🚨 **Si aun así la persona las quiere hacer**: enséñale el aviso entero, con lo que cambia y lo que le falta a cada
+  copia, y pregúntale una vez: «Estas copias se parecen demasiado y pueden quedarse en 0 o costarte alcance. ¿Las hago
+  así igualmente?». Solo con un sí claro a ese aviso, `--aun-asi`. Nunca por tu cuenta, ni aunque te haya dicho
+  «hazlo todo» antes: tiene que haber leído el aviso. Queda un `AVISO-poco-distintas.txt` en la carpeta.
 
 Por Gonzalo López · [@gonzalo_lopezg](https://www.instagram.com/gonzalo_lopezg/) en Instagram.
 
@@ -25,9 +46,16 @@ Por Gonzalo López · [@gonzalo_lopezg](https://www.instagram.com/gonzalo_lopezg
 
 ## Paso a paso
 
-1. **Pídele el vídeo** (la ruta del .mp4), el **pie** con el que lo subió y **de qué va** (para los hashtags). Si grabó
-   otros comienzos (otros «ganchos»), pídeselos también y en qué segundo acaba el comienzo de su vídeo: es lo que más
-   cambia una copia.
+1. **Pídele el vídeo** (la ruta del .mp4), el **pie** con el que lo subió y **de qué va** (para los hashtags). Y estas
+   tres cosas, que deciden si las copias van a ser distintas (la regla, arriba):
+   - **¿Grabó otros comienzos** (otros «ganchos»)? Pídeselos y en qué segundo acaba el comienzo de su vídeo. Si no, dile
+     que con 2 o 3 comienzos más, de un minuto de grabar, las copias son mucho más distintas; si no quiere, se sigue.
+   - **¿El vídeo lleva música de fondo metida?** Si no, pídele 5 canciones (.mp3/.m4a) para `--musica`. Si la lleva,
+     lo mejor es que exporte el vídeo sin ella desde su editor y cada copia lleve la suya; si no puede, ese cambio no
+     está y hacen falta los otros tres.
+   - **¿Qué frases sobran?** Pregúntale qué frases del cuerpo se pueden quitar sin que se deje de entender (ni el
+     comienzo ni el final). Con `--ver-pausas` ves dónde empieza y acaba cada frase: cada `--quitar` va de una pausa a
+     otra, nunca cortando una palabra (el script se niega si cae encima de la voz).
 
 2. **Mira el vídeo antes de tocar nada.** Saca un fotograma del segundo 1 y otro de la mitad:
    ```bash
@@ -51,10 +79,15 @@ Por Gonzalo López · [@gonzalo_lopezg](https://www.instagram.com/gonzalo_lopezg
 
 4. **Hazlas** (unos minutos por copia):
    ```bash
-   python3 copias.py video.mp4 --titulos titulos.txt --pie pie.txt \
-     --hashtags "#tema1 #tema2 #tema3 #tema4 #tema5 #tema6" [--tapa 180-430] [--espejo] \
-     [--ganchos gancho2.mp4 gancho3.mp4 --corte 3.4] [--desde AAAA-MM-DD]
+   python3 copias.py video.mp4 --ver-pausas      # dónde empieza y acaba cada frase
+   python3 copias.py video.mp4 --titulos titulos.txt --titulo-original "El titular que ya lleva" --pie pie.txt \
+     --hashtags "#tema1 #tema2 #tema3 #tema4 #tema5 #tema6" \
+     --quitar "8.0-10.5" "10.6-14.2" "14.2-16.3" "16.3-21.0" "21.0-22.1" \
+     --musica c1.mp3 c2.mp3 c3.mp3 c4.mp3 c5.mp3 [--tapa 180-430] [--espejo] \
+     [--ganchos gancho2.mp4 gancho3.mp4 --corte 3.4] [--desde AAAA-MM-DD] [--n 3]
    ```
+   Si para con «⚠ ESTAS COPIAS NO SON LO BASTANTE DISTINTAS», añade lo que dice que falta (otra frase, otra canción,
+   otro comienzo) o baja `--n`. Solo si la persona, después de leer el aviso, dice que las quiere igual: `--aun-asi`.
    Cada copia cambia a la vez: el titular, la velocidad (del 3 al 10 % más rápida, la voz sin cambiar de tono), el
    encuadre (un poco de zoom y otro centro), el color, un grano invisible, el arranque y el final (solo en los
    silencios, nunca cortando una palabra), el sonido (un matiz de ecualización) y el fichero (nuevo, sin los datos del
@@ -64,7 +97,8 @@ Por Gonzalo López · [@gonzalo_lopezg](https://www.instagram.com/gonzalo_lopezg
 
 5. **Mira `hoja.jpg`** (el titular de cada copia): que se lea a la primera, que no tape la cara y que no se vea el
    titular viejo detrás. Si algo falla, corrige `--tapa` o `--titulo-y` y rehaz esa copia.
-   El script también comprueba que cada copia dura lo que debe, tiene sonido y no se parece al original.
+   El script también comprueba que cada copia dura lo que debe y tiene sonido. Que sea otro vídeo para Instagram lo
+   deciden los cambios grandes, comprobados antes de empezar.
 
 6. **Súbelas, una al día, según `horario.txt`.**
    - **Desde el móvil (lo normal):** pásale los 5 vídeos al móvil (AirDrop, Drive…). Cada día: Instagram → «+» →
@@ -79,10 +113,14 @@ Por Gonzalo López · [@gonzalo_lopezg](https://www.instagram.com/gonzalo_lopezg
 
 - **Una al día.** Nunca dos copias del mismo vídeo el mismo día: con nueve el mismo día, las copias bajaron de unas
   3.400 visualizaciones a 190 en una semana, y varias se quedaron a 0.
-- **Cada copia, otro vídeo**: no quites ninguno de los cambios del paso 4 para «que se parezca más».
+- **Cada copia, otro vídeo**: 3 cambios grandes frente al original y 2 entre copias (la regla, arriba). No quites
+  ninguno de los cambios del paso 4 para «que se parezca más».
+- **No más de una prueba al día en total las dos primeras semanas** (aunque sean de reels distintos), mientras miras
+  cómo responde la cuenta. Es precaución, no algo medido.
 - **En manual**: que no se comparta sola con sus seguidores si funciona. Ya la vieron en su perfil.
 - **Solo vídeos suyos.** Lo que Instagram castiga es subir vídeos de otros.
-- **La primera semana**, que mire el alcance y «Estado de la cuenta». Si bajan, para.
+- **La primera semana**, que mire el alcance y «Estado de la cuenta». Si bajan, o una prueba se queda por debajo de
+  ~100 visualizaciones en 24 h, para las que quedan de ese reel y no hagas más en una semana.
 
 ## Después
 

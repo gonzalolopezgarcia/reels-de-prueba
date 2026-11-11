@@ -5,6 +5,10 @@ Solo necesita Python 3 y ffmpeg (con ffprobe) en el PATH. No toca tu cuenta: dej
 
     python3 copias.py mi-reel.mp4 --titulos titulos.txt --pie pie.txt --hashtags "#ia #claude #reels #marketing #negocio"
 
+🚨 Antes de hacer nada comprueba que cada copia es otro vídeo (distintas.py): al menos 3 cambios grandes frente al
+original (otro gancho grabado, otra frase quitada, otro titular, otra canción) y 2 entre copias. Si no llega, para con
+el aviso; --aun-asi las hace igual, solo si la persona ha leído el aviso y dice que sí.
+
 Cada copia cambia varias cosas a la vez, para que Instagram la vea como otro vídeo y no como el mismo repetido:
 velocidad (la voz no cambia de tono), encuadre (un poco de zoom y otro centro), color, grano invisible, el arranque y
 el final (solo dentro de los silencios, nunca encima de la voz), un fichero nuevo sin los datos del original y, si
@@ -21,6 +25,12 @@ Opciones:
   --caja negra|blanca|ninguna   el fondo del titular (por defecto negra).
   --ganchos A.mp4 B.mp4 …  otros comienzos grabados; --corte SEG: dónde acaba el comienzo en el vídeo original.
   --espejo            voltea la 2.ª y la 4.ª.
+  --musica A.mp3 B.mp3 …   una canción de fondo distinta por copia, bajo la voz (sin la del original).
+  --quitar "12.3-15.8" "40.1-44.0+51.0-53.2" …   lo que se quita en cada copia (una entrada por copia, en segundos
+                      del vídeo original; «+» une dos tramos): frases enteras, de pausa a pausa. --ver-pausas las lista.
+  --ver-pausas        solo imprime las pausas de la voz (para elegir de dónde a dónde va cada frase) y sale.
+  --titulo-original "…"   el titular que ya lleva el vídeo, para que ninguna copia repita el mismo.
+  --aun-asi           hacerlas aunque el aviso diga que se parecen demasiado (solo con el sí de la persona).
   --pie FICHERO       el pie del reel original; cada copia lo lleva con 5 hashtags en otro orden.
   --hashtags "…"      de 5 a 10, del tema del vídeo (nunca #viral, #fyp).
   --desde AAAA-MM-DD  el día de la primera (por defecto, mañana). --horas "11:00,13:00,16:00,19:00,21:00".
@@ -37,6 +47,9 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import distintas  # noqa: E402
 
 # Lo que cambia en cada copia (una fila por copia; si pides más de 5, vuelve a empezar con otro color)
 VELOCIDAD = [1.05, 1.08, 1.03, 1.10, 1.06]
@@ -90,6 +103,37 @@ def silencios(video, dur):
     return max(0.0, al_principio - 0.04), max(0.0, al_final - 0.04)
 
 
+def pausas(video, minimo=0.25):
+    """[(inicio, fin)] de cada pausa de la voz de al menos `minimo` s: ahí se puede cortar sin pisar una palabra."""
+    r = sale(["ffmpeg", "-hide_banner", "-nostats", "-i", str(video), "-af", f"silencedetect=n=-38dB:d={minimo}", "-vn", "-f", "null", "-"])
+    ini = [float(x) for x in re.findall(r"silence_start: (-?[\d.]+)", r.stderr)]
+    fin = [float(x) for x in re.findall(r"silence_end: ([\d.]+)", r.stderr)]
+    return [(max(0.0, a), b) for a, b in zip(ini, fin)]
+
+
+def leer_quitar(spec):
+    """«12.3-15.8+40-41» → [(12.3, 15.8), (40.0, 41.0)]; «-» o vacío → []."""
+    tramos = []
+    for t in filter(None, (spec or "").replace(" ", "").split("+")):
+        if t == "-":
+            continue
+        a, _, b = t.partition("-")
+        tramos.append((float(a), float(b)))
+        if tramos[-1][1] <= tramos[-1][0]:
+            sys.exit(f"--quitar «{spec}»: cada tramo es inicio-fin, con el fin después del inicio")
+    return tramos
+
+
+def comprobar_cortes(tramos, huecos, nombre):
+    """Cada borde de lo que se quita cae en una pausa de la voz: si no, la copia cortaría una palabra."""
+    for a, b in tramos:
+        for borde in (a, b):
+            if not any(x - 0.05 <= borde <= y + 0.05 for x, y in huecos):
+                cerca = sorted(huecos, key=lambda h: abs((h[0] + h[1]) / 2 - borde))[:3]
+                sys.exit(f"{nombre}: el corte en {borde:.2f} s cae encima de la voz. Pausas cercanas: "
+                         + ", ".join(f"{x:.2f}-{y:.2f}" for x, y in sorted(cerca)))
+
+
 def fuente():
     for f in ("/System/Library/Fonts/Supplemental/Arial Bold.ttf", "/Library/Fonts/Arial Bold.ttf",
               "C:/Windows/Fonts/arialbd.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -128,8 +172,11 @@ def una_copia(i, base, meta, a, tmp, lineas, salida):
     if i >= 5:  # más de cinco: otro color sobre la misma fila
         c, s = c + 0.03, s - 0.05
     ini, fin = meta["recorte"][i]
-    dur = meta["dur"] - ini - fin
-    v = [f"trim=start={ini:.3f}:duration={dur:.3f}", "setpts=PTS-STARTPTS",
+    fuera = meta["quitar"][i]
+    dur = meta["dur"] - ini - fin - sum(b - a for a, b in fuera)
+    filtro_fuera = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in fuera)
+    v = ([f"fps={FPS}", f"select='not({filtro_fuera})'", f"setpts=N/({FPS}*TB)"] if fuera else []) + [
+         f"trim=start={ini:.3f}:duration={dur:.3f}", "setpts=PTS-STARTPTS",
          f"scale={W}:{H}:force_original_aspect_ratio=increase", f"crop={W}:{H}",
          f"scale={round(W * z / 2) * 2}:{round(H * z / 2) * 2}",
          f"crop={W}:{H}:(in_w-{W})/2+{dx}:(in_h-{H})/2"]
@@ -146,7 +193,9 @@ def una_copia(i, base, meta, a, tmp, lineas, salida):
             alto = (64 if max(len(l) for l in lineas) <= 22 else 54) * 1.32
             y0 = int(t0 + max(0, (t1 - t0 - alto * len(lineas)) / 2))
         txt = titular(lineas, tmp, i, y0, a.titulo_s, a.caja, a.fuente or fuente())
-    cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(base), "-filter_complex"]
+    cancion = meta["musica"][i]
+    cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(base)] + (["-stream_loop", "-1", "-i", str(cancion)] if cancion else [])
+    cmd += ["-filter_complex"]
     if a.tapa and lineas:
         t0, t1 = a.tapa
         graf = (f"[0:v]{','.join(v)},split[x][y];[y]crop={W}:{t1 - t0}:0:{t0},boxblur=24:3[z];"
@@ -154,8 +203,14 @@ def una_copia(i, base, meta, a, tmp, lineas, salida):
     else:
         graf = f"[0:v]{','.join(v + txt)}[v]"
     if meta["audio"]:
-        graf += (f";[0:a]atrim=start={ini:.3f}:duration={dur:.3f},asetpts=PTS-STARTPTS,atempo={vel},"
-                 f"equalizer=f={[180, 2500, 6000, 320, 4000][i % 5]}:t=q:w=1:g={[1.5, -1, 1, -1.5, 0.8][i % 5]}[a]")
+        sel = f"aselect='not({filtro_fuera})',asetpts=N/SR/TB," if fuera else ""
+        graf += (f";[0:a]{sel}atrim=start={ini:.3f}:duration={dur:.3f},asetpts=PTS-STARTPTS,atempo={vel},"
+                 f"equalizer=f={[180, 2500, 6000, 320, 4000][i % 5]}:t=q:w=1:g={[1.5, -1, 1, -1.5, 0.8][i % 5]}"
+                 + ("[voz]" if cancion else "[a]"))
+        if cancion:   # la canción, bajo la voz (unos 15 dB por debajo), con fundido al final
+            largo = dur / vel
+            graf += (f";[1:a]atrim=0:{largo:.3f},asetpts=PTS-STARTPTS,aresample=48000,loudnorm=I=-30:TP=-6:LRA=7,"
+                     f"afade=t=out:st={max(0.0, largo - 1.5):.3f}:d=1.5[m];[voz][m]amix=inputs=2:duration=first:normalize=0[a]")
     cmd += [graf, "-map", "[v]"] + (["-map", "[a]", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"] if meta["audio"] else [])
     cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", str(CALIDAD[i % 5]), "-r", str(FPS),
             "-g", str(FPS * 2), "-map_metadata", "-1", "-map_chapters", "-1", "-fflags", "+bitexact",
@@ -219,6 +274,11 @@ def main():
     p.add_argument("--horas", default=HORAS)
     p.add_argument("--salida")
     p.add_argument("--n", type=int, default=5)
+    p.add_argument("--musica", nargs="*")
+    p.add_argument("--quitar", nargs="*")
+    p.add_argument("--ver-pausas", action="store_true")
+    p.add_argument("--titulo-original")
+    p.add_argument("--aun-asi", action="store_true")
     a = p.parse_args()
 
     for prog in ("ffmpeg", "ffprobe"):
@@ -230,6 +290,15 @@ def main():
     if a.ganchos and a.corte is None:
         sys.exit("Con --ganchos hace falta --corte: el segundo en que acaba el comienzo en tu vídeo")
     meta = info(video)
+    if a.ver_pausas:
+        print(f"Pausas de la voz en {video.name} ({meta['dur']:.1f} s); una frase va de una pausa a la siguiente:")
+        print("\n".join(f"  {x:7.2f} - {y:7.2f}" for x, y in pausas(video)))
+        return
+    if a.musica and not meta["audio"]:
+        sys.exit("--musica: el vídeo no tiene sonido")
+    for c in a.musica or []:
+        if not Path(c).expanduser().exists():
+            sys.exit(f"No existe {c}")
     if meta["w"] > meta["h"]:
         print("⚠ El vídeo es horizontal: las copias salen en vertical (1080×1920) recortando los lados.")
     titulos = []
@@ -237,11 +306,39 @@ def main():
         titulos = [l.strip() for l in Path(a.titulos).expanduser().read_text(encoding="utf-8").splitlines() if l.strip()]
         if len(titulos) < a.n:
             sys.exit(f"{a.titulos} tiene {len(titulos)} titulares y hacen falta {a.n}")
+    quitar = [leer_quitar(q) for q in (a.quitar or [])]
+    if quitar:
+        huecos = pausas(video, 0.12)
+        for k, q in enumerate(quitar):
+            comprobar_cortes(q, huecos, f"--quitar de la copia {k + 1}")
+            if a.corte is not None and any(x < a.corte for x, _ in q):
+                sys.exit(f"--quitar de la copia {k + 1}: con --ganchos solo se quita después de --corte ({a.corte} s)")
+
+    # 🚨 ¿Cada copia es otro vídeo? (distintas.py). Si no, el aviso y para, salvo --aun-asi con el sí de la persona
+    copias = [{"gancho": str(Path(a.ganchos[i % len(a.ganchos)]).expanduser().resolve()) if a.ganchos else None,
+               "cuerpo": "+".join(f"{x:.2f}-{y:.2f}" for x, y in quitar[i % len(quitar)]) or None if quitar else None,
+               "titular": titulos[i] if titulos else None,
+               "cancion": str(Path(a.musica[i % len(a.musica)]).expanduser().resolve()) if a.musica else None}
+              for i in range(a.n)]
+    avisos = distintas.revisar(copias, {"titular": a.titulo_original})
+    if avisos and not a.aun_asi:
+        sys.exit(distintas.aviso(avisos, arreglos=(
+            "Otro comienzo grabado para cada copia: --ganchos gancho2.mp4 gancho3.mp4 … --corte <seg>.",
+            "Una frase distinta fuera en cada copia: --quitar \"12.3-15.8\" \"20.1-24.0\" … (--ver-pausas para elegirlas).",
+            "Otra canción de fondo en cada copia: --musica a.mp3 b.mp3 c.mp3 d.mp3 e.mp3 (si el vídeo ya trae música,\n"
+            "     mejor exportarlo sin ella y que cada copia lleve la suya).",
+            "Otro titular en cada copia: --titulos, la misma idea dicha de cinco formas (y --titulo-original).",
+            "Menos copias: --n 3. Mejor 3 distintas que 5 parecidas.")))
     salida = Path(a.salida).expanduser() if a.salida else video.with_name(video.stem + "-pruebas")
     salida.mkdir(parents=True, exist_ok=True)
 
     ini_libre, fin_libre = silencios(video, meta["dur"])
     meta["recorte"] = [(min(ARRANQUE[i % 5], ini_libre), min(FINAL[i % 5], fin_libre)) for i in range(a.n)]
+    meta["quitar"] = [quitar[i % len(quitar)] if quitar else [] for i in range(a.n)]
+    meta["musica"] = [Path(a.musica[i % len(a.musica)]).expanduser() if a.musica else None for i in range(a.n)]
+    if avisos:
+        (salida / "AVISO-poco-distintas.txt").write_text(distintas.aviso(avisos), encoding="utf-8")
+        print("⚠ Hechas igual con --aun-asi:\n  " + "\n  ".join(avisos))
     print(f"{video.name}: {meta['dur']:.1f} s, {meta['w']}×{meta['h']}, {meta['fps']} fps · silencio al principio "
           f"{ini_libre:.2f} s y al final {fin_libre:.2f} s (solo ahí se recorta)")
 
@@ -253,6 +350,8 @@ def main():
                 base = con_gancho(Path(a.ganchos[i % len(a.ganchos)]).expanduser(), video, a.corte, meta, tmp, i)
                 m.update(info(base))
                 m["recorte"] = [(0.0, meta["recorte"][i][1])] * a.n
+                corre = m["dur"] - (meta["dur"] - a.corte)   # el original, desde --corte, empieza aquí en esta base
+                m["quitar"] = [[(x + corre, y + corre) for x, y in meta["quitar"][i]]] * a.n
             lineas = [x.strip() for x in titulos[i].split(" / ")] if titulos else []
             out = salida / f"{video.stem}-prueba-{i + 1}.mp4"
             print(f"  copia {i + 1}/{a.n}…", end="", flush=True)
@@ -277,11 +376,12 @@ def main():
     (salida / "horario.txt").write_text("\n".join(filas) + "\n", encoding="utf-8")
 
     # Comprobación: cada copia dura lo que debe, tiene sonido si el original lo tenía, y no se parece al original
-    print("\nComprobación (diferencia con el original: 0 = idéntico; por debajo de 4, cambia más cosas):")
+    print("\nComprobación técnica (diferencia de imagen con el original; por debajo de 4 algo no se aplicó). No dice si\n"
+          "Instagram la ve distinta: eso lo deciden los cambios grandes, que ya se comprobaron antes de empezar.")
     for i, out in enumerate(hechas):
         m = info(out)
         d = diferencia(video, out, min(m["dur"], meta["dur"]))
-        aviso = "" if d >= 4 else "  ⚠ se parece demasiado"
+        aviso = "" if d >= 4 else "  ⚠ casi idéntica al original: revisa que se aplicaron los cambios"
         print(f"  {out.name}: {m['dur']:.1f} s · {m['w']}×{m['h']} · {'con' if m['audio'] else 'SIN'} sonido · diferencia {d:.1f}{aviso}")
     hoja = salida / "hoja.jpg"
     entradas = []
