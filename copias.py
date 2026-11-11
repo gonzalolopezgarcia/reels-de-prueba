@@ -5,9 +5,9 @@ Solo necesita Python 3 y ffmpeg (con ffprobe) en el PATH. No toca tu cuenta: dej
 
     python3 copias.py mi-reel.mp4 --titulos titulos.txt --pie pie.txt --hashtags "#ia #claude #reels #marketing #negocio"
 
-🚨 Antes de hacer nada comprueba que cada copia es otro vídeo (distintas.py): al menos 3 cambios grandes frente al
-original (otro gancho grabado, otra frase quitada, otro titular, otra canción) y 2 entre copias. Si no llega, para con
-el aviso; --aun-asi las hace igual, solo si la persona ha leído el aviso y dice que sí.
+🚨 Antes de hacer nada comprueba la regla de mínimos (distintas.py): entre el vídeo y sus copias (6 vídeos), ninguno
+repite canción, estilo de subtítulos, contenido (otro comienzo u otra frase fuera) ni titular, y la velocidad tampoco.
+Si no se cumple, para con el aviso; --aun-asi las hace igual, solo si la persona ha leído el aviso y dice que sí.
 
 Cada copia cambia varias cosas a la vez, para que Instagram la vea como otro vídeo y no como el mismo repetido:
 velocidad (la voz no cambia de tono), encuadre (un poco de zoom y otro centro), color, grano invisible, el arranque y
@@ -30,6 +30,9 @@ Opciones:
                       del vídeo original; «+» une dos tramos): frases enteras, de pausa a pausa. --ver-pausas las lista.
   --ver-pausas        solo imprime las pausas de la voz (para elegir de dónde a dónde va cada frase) y sale.
   --titulo-original "…"   el titular que ya lleva el vídeo, para que ninguna copia repita el mismo.
+  --srt FICHERO       los subtítulos del vídeo (.srt): cada copia los quema con otro estilo (blanco con borde, caja
+                      negra, amarillo, caja blanca, mayúsculas, caja amarilla). El vídeo, exportado SIN subtítulos.
+  --sin-voz           el vídeo no tiene voz ni subtítulos: el estilo de subtítulos no se pide.
   --aun-asi           hacerlas aunque el aviso diga que se parecen demasiado (solo con el sí de la persona).
   --pie FICHERO       el pie del reel original; cada copia lo lleva con 5 hashtags en otro orden.
   --hashtags "…"      de 5 a 10, del tema del vídeo (nunca #viral, #fyp).
@@ -67,6 +70,17 @@ FINAL = [0.00, 0.20, 0.10, 0.30, 0.15]            # s que se quitan al final, so
 ESPEJO = [False, True, False, True, False]
 CALIDAD = [18, 19, 17, 20, 18]
 HORAS = "11:00,13:00,16:00,19:00,21:00"
+# Un estilo de subtítulos por copia (--srt): ninguna repite el de otra ni el del vídeo (que va sin ellos o con los suyos).
+# Medidas de libass sobre un alto de 288: 11 ≈ 73 px en 1920, MarginV 95 ≈ a la altura del pecho
+_BASE = "FontName=Arial,FontSize=11,Bold=1,Alignment=2,MarginV=95,Shadow=0"
+SUBS = {
+    "blanco con borde": _BASE + ",PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=1.6",
+    "caja negra": _BASE + ",PrimaryColour=&H00FFFFFF,OutlineColour=&H38000000,BackColour=&H38000000,BorderStyle=3,Outline=3",
+    "amarillo": _BASE + ",PrimaryColour=&H004DE1FF,OutlineColour=&H00000000,BorderStyle=1,Outline=1.6",
+    "caja blanca": _BASE + ",PrimaryColour=&H00111111,OutlineColour=&H00FFFFFF,BackColour=&H00FFFFFF,BorderStyle=3,Outline=3",
+    "mayúsculas": _BASE.replace("FontSize=11", "FontSize=10") + ",PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=1.8",
+    "caja amarilla": _BASE + ",PrimaryColour=&H00111111,OutlineColour=&H004DE1FF,BackColour=&H004DE1FF,BorderStyle=3,Outline=3",
+}
 
 
 def sale(cmd, **kw):
@@ -134,6 +148,32 @@ def comprobar_cortes(tramos, huecos, nombre):
                          + ", ".join(f"{x:.2f}-{y:.2f}" for x, y in sorted(cerca)))
 
 
+def leer_srt(fichero):
+    """[(inicio, fin, texto)] de un .srt."""
+    def seg(t):
+        h, m, r = t.strip().replace(",", ".").split(":")
+        return int(h) * 3600 + int(m) * 60 + float(r)
+    bloques = re.split(r"\n\s*\n", Path(fichero).expanduser().read_text(encoding="utf-8-sig").strip())
+    salida = []
+    for b in bloques:
+        lineas = b.strip().splitlines()
+        k = next((n for n, l in enumerate(lineas) if "-->" in l), None)
+        if k is not None:
+            x, y = lineas[k].split("-->")
+            salida.append((seg(x), seg(y), "\n".join(lineas[k + 1:])))
+    if not salida:
+        sys.exit(f"{fichero}: no encuentro subtítulos (formato .srt: número, «00:00:01,000 --> 00:00:02,500», texto)")
+    return salida
+
+
+def escribir_srt(cues, fichero, mayusculas=False):
+    def t(x):
+        x = max(0.0, x)
+        return f"{int(x // 3600):02d}:{int(x % 3600 // 60):02d}:{x % 60:06.3f}".replace(".", ",")
+    Path(fichero).write_text("\n\n".join(f"{n}\n{t(a)} --> {t(b)}\n{x.upper() if mayusculas else x}"
+                                          for n, (a, b, x) in enumerate(cues, 1)) + "\n", encoding="utf-8")
+
+
 def fuente():
     for f in ("/System/Library/Fonts/Supplemental/Arial Bold.ttf", "/Library/Fonts/Arial Bold.ttf",
               "C:/Windows/Fonts/arialbd.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -175,7 +215,14 @@ def una_copia(i, base, meta, a, tmp, lineas, salida):
     fuera = meta["quitar"][i]
     dur = meta["dur"] - ini - fin - sum(b - a for a, b in fuera)
     filtro_fuera = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in fuera)
-    v = ([f"fps={FPS}", f"select='not({filtro_fuera})'", f"setpts=N/({FPS}*TB)"] if fuera else []) + [
+    subs = []
+    if meta["srt"] is not None:   # en el tiempo de la base, antes de quitar, recortar y acelerar: todo se mueve con ella
+        estilo = meta["subs"][i]
+        f = Path(tmp) / f"subs-{i}.srt"
+        escribir_srt(meta["srt"], f, mayusculas=estilo == "mayúsculas")
+        subs = [f"scale={W}:{H}:force_original_aspect_ratio=increase", f"crop={W}:{H}",
+                f"subtitles=filename='{ruta_ffmpeg(f)}':force_style='{SUBS[estilo]}'"]
+    v = subs + ([f"fps={FPS}", f"select='not({filtro_fuera})'", f"setpts=N/({FPS}*TB)"] if fuera else []) + [
          f"trim=start={ini:.3f}:duration={dur:.3f}", "setpts=PTS-STARTPTS",
          f"scale={W}:{H}:force_original_aspect_ratio=increase", f"crop={W}:{H}",
          f"scale={round(W * z / 2) * 2}:{round(H * z / 2) * 2}",
@@ -279,6 +326,8 @@ def main():
     p.add_argument("--ver-pausas", action="store_true")
     p.add_argument("--titulo-original")
     p.add_argument("--aun-asi", action="store_true")
+    p.add_argument("--srt")
+    p.add_argument("--sin-voz", action="store_true")
     a = p.parse_args()
 
     for prog in ("ffmpeg", "ffprobe"):
@@ -314,21 +363,29 @@ def main():
             if a.corte is not None and any(x < a.corte for x, _ in q):
                 sys.exit(f"--quitar de la copia {k + 1}: con --ganchos solo se quita después de --corte ({a.corte} s)")
 
-    # 🚨 ¿Cada copia es otro vídeo? (distintas.py). Si no, el aviso y para, salvo --aun-asi con el sí de la persona
-    copias = [{"gancho": str(Path(a.ganchos[i % len(a.ganchos)]).expanduser().resolve()) if a.ganchos else None,
-               "cuerpo": "+".join(f"{x:.2f}-{y:.2f}" for x, y in quitar[i % len(quitar)]) or None if quitar else None,
+    # 🚨 La regla de mínimos (distintas.py): entre el vídeo y sus copias no se repite canción, estilo de subtítulos,
+    # contenido ni titular (ni velocidad). Si no se cumple, el aviso y para, salvo --aun-asi con el sí de la persona
+    estilos = list(SUBS)
+    copias = [{"cancion": str(Path(a.musica[i % len(a.musica)]).expanduser().resolve()) if a.musica else None,
+               "subtitulos": ("sin subtítulos" if a.sin_voz else estilos[i % len(estilos)] if a.srt else None),
+               "contenido": (str(Path(a.ganchos[i % len(a.ganchos)]).expanduser().resolve()) if a.ganchos else "su comienzo",
+                             "+".join(f"{x:.2f}-{y:.2f}" for x, y in quitar[i % len(quitar)]) or "entero"
+                             if quitar else "entero"),
                "titular": titulos[i] if titulos else None,
-               "cancion": str(Path(a.musica[i % len(a.musica)]).expanduser().resolve()) if a.musica else None}
+               "velocidad": VELOCIDAD[i % len(VELOCIDAD)] if i < len(VELOCIDAD) else None}
               for i in range(a.n)]
-    avisos = distintas.revisar(copias, {"titular": a.titulo_original})
+    original = {"cancion": "la del vídeo", "subtitulos": "sin subtítulos" if a.sin_voz else "los del vídeo",
+                "contenido": ("su comienzo", "entero"), "titular": a.titulo_original or "el del vídeo", "velocidad": 1.0}
+    avisos = distintas.revisar(copias, original)
     if avisos and not a.aun_asi:
         sys.exit(distintas.aviso(avisos, arreglos=(
-            "Otro comienzo grabado para cada copia: --ganchos gancho2.mp4 gancho3.mp4 … --corte <seg>.",
-            "Una frase distinta fuera en cada copia: --quitar \"12.3-15.8\" \"20.1-24.0\" … (--ver-pausas para elegirlas).",
-            "Otra canción de fondo en cada copia: --musica a.mp3 b.mp3 c.mp3 d.mp3 e.mp3 (si el vídeo ya trae música,\n"
-            "     mejor exportarlo sin ella y que cada copia lleve la suya).",
-            "Otro titular en cada copia: --titulos, la misma idea dicha de cinco formas (y --titulo-original).",
-            "Menos copias: --n 3. Mejor 3 distintas que 5 parecidas.")))
+            "Canción: --musica con 5 canciones, una por copia (si el vídeo ya trae música, mejor exportarlo sin ella).",
+            "Subtítulos: --srt con los subtítulos del vídeo (y el vídeo exportado SIN ellos): cada copia los lleva en\n"
+            "     otro estilo. Si no habla nadie, --sin-voz.",
+            "Contenido: --ganchos (otros comienzos grabados) y/o --quitar, una frase distinta fuera en cada copia\n"
+            "     (--ver-pausas para elegirlas). Ninguna combinación repetida.",
+            "Titular: --titulos, 5 frases distintas (y --titulo-original con el que ya lleva el vídeo).",
+            "Menos copias: --n 3. Mejor 3 que cumplan que 5 que se repitan.")))
     salida = Path(a.salida).expanduser() if a.salida else video.with_name(video.stem + "-pruebas")
     salida.mkdir(parents=True, exist_ok=True)
 
@@ -336,6 +393,8 @@ def main():
     meta["recorte"] = [(min(ARRANQUE[i % 5], ini_libre), min(FINAL[i % 5], fin_libre)) for i in range(a.n)]
     meta["quitar"] = [quitar[i % len(quitar)] if quitar else [] for i in range(a.n)]
     meta["musica"] = [Path(a.musica[i % len(a.musica)]).expanduser() if a.musica else None for i in range(a.n)]
+    meta["srt"] = leer_srt(a.srt) if a.srt else None
+    meta["subs"] = [estilos[i % len(estilos)] for i in range(a.n)]
     if avisos:
         (salida / "AVISO-poco-distintas.txt").write_text(distintas.aviso(avisos), encoding="utf-8")
         print("⚠ Hechas igual con --aun-asi:\n  " + "\n  ".join(avisos))
@@ -352,6 +411,8 @@ def main():
                 m["recorte"] = [(0.0, meta["recorte"][i][1])] * a.n
                 corre = m["dur"] - (meta["dur"] - a.corte)   # el original, desde --corte, empieza aquí en esta base
                 m["quitar"] = [[(x + corre, y + corre) for x, y in meta["quitar"][i]]] * a.n
+                if meta["srt"] is not None:   # los subtítulos del vídeo desde --corte; el comienzo nuevo va sin ellos
+                    m["srt"] = [(x + corre, y + corre, t) for x, y, t in meta["srt"] if x >= a.corte - 0.05]
             lineas = [x.strip() for x in titulos[i].split(" / ")] if titulos else []
             out = salida / f"{video.stem}-prueba-{i + 1}.mp4"
             print(f"  copia {i + 1}/{a.n}…", end="", flush=True)
