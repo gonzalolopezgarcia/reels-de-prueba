@@ -26,6 +26,15 @@ El vídeo y sus 5 copias son 6 vídeos. **Entre ellos no puede haber dos con:**
 Y encima, todo lo distinto que se pueda: velocidad (tampoco se repite), encuadre, color, grano, arranque y final. Solos
 no bastan: Instagram reconoce el vídeo por lo que se ve y se oye.
 
+- **El encuadre, el que más cambia de lo de encima**: cada copia lleva un zoom del 3 al 9 % y la imagen corrida hasta
+  24 px, distintos en cada una, y los más distintos van a las copias que más se parecen (el mismo comienzo, la misma
+  frase fuera, el mismo espejo) y a la que más se parece al vídeo original (`encuadre_trials.py`). Medido en el mismo
+  fotograma, dos copias que se diferenciaban un 0-4 % en una huella de la imagen pasan a un 12-35 %; el espejo, ~50 %;
+  el color y el grano, ~1 % (el grano solo cambia el fichero).
+- **Con control de calidad, para que por variar no salga peor**: antes de cada copia mide que la imagen no pierde una
+  nitidez que se note (con un 9 % de zoom se queda en un 90-96 %; un 20 % se rechaza), que ninguna letra del vídeo
+  queda cortada o pegada al borde y que el grano no se ve. Lo que no pasa baja (el zoom, un escalón hasta sin zoom; el
+  grano, un nivel) y la línea de esa copia lo dice. `--sin-zoom` / `--sin-grano` para quitarlos.
 - `copias.py` lo comprueba antes de empezar (`distintas.py`) y **para con un aviso** si algo se repite.
 - **Si no llega para 5, haz menos** (`--n 3`). Mejor 3 que cumplan que 5 que se repitan.
 - Un vídeo en el que no habla nadie (sin voz ni subtítulos): `--sin-voz`, y el estilo de subtítulos no se pide.
@@ -70,10 +79,11 @@ no bastan: Instagram reconoce el vídeo por lo que se ve y se oye.
    ```
    Míralos y apunta:
    - **¿Lleva su propio titular arriba?** Entonces cada copia lo difumina y pone el nuevo encima: `--tapa Y0-Y1` con
-     la franja que ocupa (en píxeles de un vídeo de 1080×1920, con 70 px de margen por arriba y por abajo, porque cada
-     copia hace un poco de zoom). Si no lleva, el titular nuevo va en `--titulo-y 260`.
+     la franja que ocupa (en píxeles de un vídeo de 1080×1920, con 90 px de margen por arriba y por abajo, porque cada
+     copia hace hasta un 9 % de zoom). Si no lleva, el titular nuevo va en `--titulo-y 260`.
    - **¿Lleva letras en el vídeo** (subtítulos, una pantalla, un cartel)? Entonces **sin `--espejo`**: saldrían del
-     revés. Solo si no hay ninguna letra, `--espejo` voltea la 2.ª y la 4.ª.
+     revés. Solo si no hay ninguna letra, `--espejo` voltea la 2.ª y la 4.ª. Los subtítulos de `--srt` se ponen
+     después del espejo: esos siempre salen al derecho.
    - Dónde está su cara: el titular nunca encima.
 
 3. **Escribe 5 titulares** en `titulos.txt`, uno por línea (` / ` parte el titular en dos líneas):
@@ -97,7 +107,7 @@ no bastan: Instagram reconoce el vídeo por lo que se ve y se oye.
    Si para con «⚠ ESTAS COPIAS NO SON LO BASTANTE DISTINTAS», arregla lo que dice que se repite (otra canción, el
    `.srt`, otra frase fuera u otro comienzo, otro titular) o baja `--n`. Solo si la persona, después de leer el aviso, dice que las quiere igual: `--aun-asi`.
    Cada copia cambia a la vez: el titular, la velocidad (del 3 al 10 % más rápida, la voz sin cambiar de tono), el
-   encuadre (un poco de zoom y otro centro), el color, un grano invisible, el arranque y el final (solo en los
+   encuadre (su zoom y su centro, si pasan el control), el color, un grano invisible, el arranque y el final (solo en los
    silencios, nunca cortando una palabra), el sonido (un matiz de ecualización) y el fichero (nuevo, sin los datos del
    original). Con `--ganchos`, además, cada una empieza con otro comienzo.
    Deja en `<vídeo>-pruebas/`: las 5 copias, el pie de cada una (el suyo, con 5 hashtags en otro orden: nunca

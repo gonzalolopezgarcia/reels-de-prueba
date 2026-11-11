@@ -10,7 +10,8 @@ repite canción, estilo de subtítulos, contenido (otro comienzo u otra frase fu
 Si no se cumple, para con el aviso; --aun-asi las hace igual, solo si la persona ha leído el aviso y dice que sí.
 
 Cada copia cambia varias cosas a la vez, para que Instagram la vea como otro vídeo y no como el mismo repetido:
-velocidad (la voz no cambia de tono), encuadre (un poco de zoom y otro centro), color, grano invisible, el arranque y
+velocidad (la voz no cambia de tono), encuadre (un zoom del 3 al 9 % y otro centro, distinto en cada copia y más
+distinto entre las que más se parecen), color, grano invisible, el arranque y
 el final (solo dentro de los silencios, nunca encima de la voz), un fichero nuevo sin los datos del original y, si
 le pasas `--titulos`, otro titular arriba los primeros segundos. Con `--ganchos` (otros comienzos que grabaste),
 cada copia empieza con uno distinto. Con `--espejo`, la 2.ª y la 4.ª van volteadas (solo si el vídeo no lleva letras:
@@ -34,6 +35,11 @@ Opciones:
                       negra, amarillo, caja blanca, mayúsculas, caja amarilla). El vídeo, exportado SIN subtítulos.
   --sin-voz           el vídeo no tiene voz ni subtítulos: el estilo de subtítulos no se pide.
   --aun-asi           hacerlas aunque el aviso diga que se parecen demasiado (solo con el sí de la persona).
+  --sin-zoom          ninguna copia con zoom ni otro centro (si algo pegado al borde no se puede cortar).
+  --sin-grano         ninguna copia con grano.
+Control de calidad del zoom y del grano (encuadre_trials.py), en cada copia antes de hacerla: la imagen no pierde
+nitidez que se note, ninguna letra del vídeo queda cortada o pegada al borde y el grano no se ve. Si algo no pasa, ese
+zoom baja un escalón (hasta sin zoom) o el grano un nivel, y lo dice.
   --pie FICHERO       el pie del reel original; cada copia lo lleva con 5 hashtags en otro orden.
   --hashtags "…"      de 5 a 10, del tema del vídeo (nunca #viral, #fyp).
   --desde AAAA-MM-DD  el día de la primera (por defecto, mañana). --horas "11:00,13:00,16:00,19:00,21:00".
@@ -53,11 +59,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import distintas  # noqa: E402
+import encuadre_trials  # noqa: E402
 
 # Lo que cambia en cada copia (una fila por copia; si pides más de 5, vuelve a empezar con otro color)
 VELOCIDAD = [1.05, 1.08, 1.03, 1.10, 1.06]
-ZOOM = [1.05, 1.08, 1.04, 1.07, 1.06]
-DESPLAZA = [0, -14, 12, -8, 9]                    # px a izquierda/derecha del centro, después del zoom
 COLOR = [  # contraste, brillo, saturación, gamma, (rojo, azul) en sombras
     (1.04, 0.01, 1.10, 0.98, (0.03, -0.03)),
     (0.97, 0.02, 0.92, 1.03, (-0.02, 0.03)),
@@ -218,7 +223,8 @@ def titular(lineas, tmp, i, y0, segs, caja, fnt):
 
 def una_copia(i, base, meta, a, tmp, lineas, salida):
     W, H, FPS = 1080, 1920, meta["fps"]
-    vel, z, dx = VELOCIDAD[i % 5], ZOOM[i % 5], DESPLAZA[i % 5]
+    vel = VELOCIDAD[i % 5]
+    z, dx, grano = meta["encuadre"][i]
     c, b, s, g, (rs, bs) = COLOR[i % 5]
     if i >= 5:  # más de cinco: otro color sobre la misma fila
         c, s = c + 0.03, s - 0.05
@@ -231,18 +237,17 @@ def una_copia(i, base, meta, a, tmp, lineas, salida):
         estilo = meta["subs"][i]
         f = Path(tmp) / f"subs-{i}.srt"
         escribir_srt(meta["srt"], f, mayusculas=estilo == "mayúsculas")
-        subs = [f"scale={W}:{H}:force_original_aspect_ratio=increase", f"crop={W}:{H}",
-                f"subtitles=filename='{ruta_ffmpeg(f)}':force_style='{SUBS[estilo]}'"]
-    v = subs + ([f"fps={FPS}", f"select='not({filtro_fuera})'", f"setpts=N/({FPS}*TB)"] if fuera else []) + [
+        subs = [f"subtitles=filename='{ruta_ffmpeg(f)}':force_style='{SUBS[estilo]}'"]
+    # Primero lo que mueve la imagen (vertical, zoom, espejo) y después los subtítulos, para que no se volteen ni se
+    # corten; todo antes de quitar, recortar y acelerar, en el tiempo de la base
+    v = [f"scale={W}:{H}:force_original_aspect_ratio=increase", f"crop={W}:{H}", encuadre_trials.filtro(z, dx, W, H),
+         "hflip" if a.espejo and ESPEJO[i % 5] else ""] + subs
+    v += ([f"fps={FPS}", f"select='not({filtro_fuera})'", f"setpts=N/({FPS}*TB)"] if fuera else []) + [
          f"trim=start={ini:.3f}:duration={dur:.3f}", "setpts=PTS-STARTPTS",
-         f"scale={W}:{H}:force_original_aspect_ratio=increase", f"crop={W}:{H}",
-         f"scale={round(W * z / 2) * 2}:{round(H * z / 2) * 2}",
-         f"crop={W}:{H}:(in_w-{W})/2+{dx}:(in_h-{H})/2"]
-    if a.espejo and ESPEJO[i % 5]:
-        v.append("hflip")
-    v += [f"eq=contrast={c}:brightness={b}:saturation={s}:gamma={g}",
-          f"colorbalance=rs={rs}:bs={bs}", f"noise=alls=3:allf=t:all_seed={1000 + i * 37}",
-          f"setpts=PTS/{vel}", f"fps={FPS}", "format=yuv420p"]
+         f"eq=contrast={c}:brightness={b}:saturation={s}:gamma={g}",
+         f"colorbalance=rs={rs}:bs={bs}", encuadre_trials.filtro_grano(grano, 1000 + i * 37),
+         f"setpts=PTS/{vel}", f"fps={FPS}", "format=yuv420p"]
+    v = [x for x in v if x]
     txt = []
     if lineas:
         y0 = a.titulo_y
@@ -337,6 +342,8 @@ def main():
     p.add_argument("--ver-pausas", action="store_true")
     p.add_argument("--titulo-original")
     p.add_argument("--aun-asi", action="store_true")
+    p.add_argument("--sin-zoom", action="store_true")
+    p.add_argument("--sin-grano", action="store_true")
     p.add_argument("--srt")
     p.add_argument("--sin-voz", action="store_true")
     a = p.parse_args()
@@ -409,6 +416,13 @@ def main():
     meta["musica"] = [Path(a.musica[i % len(a.musica)]).expanduser() if a.musica else None for i in range(a.n)]
     meta["srt"] = leer_srt(a.srt) if a.srt else None
     meta["subs"] = [estilos[i % len(estilos)] for i in range(a.n)]
+    # Zoom y otro centro: distintos en cada copia y más distintos entre las que más se parecen (mismo comienzo, misma
+    # frase fuera, mismo espejo), el vídeo original incluido (encuadre_trials.repartir)
+    piezas = [{"gancho": copias[i]["contenido"][0], "cuerpo": copias[i]["contenido"][1],
+               "espejo": bool(a.espejo and ESPEJO[i % 5])} for i in range(a.n)]
+    reparto = ([(1.0, 0)] * a.n if a.sin_zoom else
+               encuadre_trials.repartir(piezas, {"gancho": "su comienzo", "cuerpo": "entero", "espejo": False}))
+    meta["encuadre"] = [None] * a.n
     if avisos:
         (salida / "AVISO-poco-distintas.txt").write_text(distintas.aviso(avisos), encoding="utf-8")
         print("⚠ Hechas igual con --aun-asi:\n  " + "\n  ".join(avisos))
@@ -430,9 +444,21 @@ def main():
             lineas = [x.strip() for x in titulos[i].split(" / ")] if titulos else []
             out = salida / f"{video.stem}-prueba-{i + 1}.mp4"
             print(f"  copia {i + 1}/{a.n}…", end="", flush=True)
+            # El control de calidad, en la base de esta copia ya en vertical: el zoom que pasa (nitidez y ninguna letra
+            # cortada) y el grano que no se ve
+            vertical = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
+            z, dx = reparto[i]
+            nitidez, bajada = 1.0, ""
+            if z > 1.0:
+                z, dx, nitidez, bajada = encuadre_trials.elegir_zoom("ffmpeg", base, z, dx, 1080, 1920, None,
+                                                                     con_letras=True, vf_antes=vertical)
+            grano = 0 if a.sin_grano else encuadre_trials.elegir_grano("ffmpeg", base, 1000 + i * 37, vf=vertical)[0]
+            m["encuadre"] = [(z, dx, grano)] * a.n
+            meta["encuadre"][i] = (z, dx, grano)
             una_copia(i, base, m, a, tmp, lineas, out)
             hechas.append(out)
-            print(f" {out.name}")
+            zoom = f"zoom {(z - 1) * 100:.1f} %" if z > 1.0 else "sin zoom"
+            print(f" {out.name} · {zoom}, grano {grano}" + (f" [{bajada}]" if bajada else ""))
 
     # Pies: el del original (su primera línea igual, así la respuesta automática de «comenta X» también contesta)
     # y 5 hashtags en otro orden en cada copia
